@@ -3,36 +3,40 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\GymQrToken;
+use App\Models\GymQRToken;
 use Illuminate\Support\Str;
 
 class QrCodeController extends Controller
 {
+    // Untuk user generate QR (misalnya member/karyawan)
     public function generate(Request $request)
     {
-        $user = $request->user(); // sudah login via Sanctum
+        $user = $request->user(); // login via Sanctum
+        $branchId = $user->gym_branch_id;
 
-        $token = Str::random(32);
-        $expiredAt = now()->addMinutes(1);
+        $token = Str::uuid()->toString(); // gunakan UUID
+        $expiredAt = now()->addMinute();  // expired dalam 1 menit
 
-        $qr = GymQrToken::create([
-            'user_id' => $user->id,
-            'token' => $token,
-            'expired_at' => $expiredAt,
+        $qr = GymQRToken::create([
+            'user_id'       => $user->id,
+            'gym_branch_id' => $branchId,
+            'token'         => $token,
+            'type'          => $request->input('type', 'checkin'),
+            'expired_at'    => $expiredAt,
         ]);
 
         return response()->json([
-            'token' => $token,
-            'expired_at' => $expiredAt,
-            // optionally generate base64 QR here
+            'token'      => $qr->token,
+            'expired_at' => $qr->expired_at,
         ]);
     }
 
+    // Untuk alat scan memverifikasi QR (tanpa auth)
     public function verify(Request $request)
     {
         $token = $request->input('token');
 
-        $qr = GymQrToken::where('token', $token)->first();
+        $qr = GymQRToken::where('token', $token)->latest()->first();
 
         if (! $qr) {
             return response()->json(['message' => 'Invalid QR token'], 404);
@@ -43,16 +47,17 @@ class QrCodeController extends Controller
         }
 
         if ($qr->expired_at < now()) {
-            return response()->json(['message' => 'QR token expired, Generate Again'], 400);
+            return response()->json(['message' => 'QR token expired'], 400);
         }
 
-        // Valid
-        $qr->update(['used_at' => now()]);
+        $qr->used_at = now();
+        $qr->save();
 
         return response()->json([
-            'message' => 'Check-in success',
-            'user_id' => $qr->user_id,
-            'user' => $qr->user,
+            'message'   => 'QR valid',
+            'user_id'   => $qr->user_id,
+            'user'      => $qr->user->only(['id', 'name', 'role']),
+            'branch_id' => $qr->gym_branch_id,
         ]);
     }
 }
